@@ -31,9 +31,12 @@
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
 #include <Wire.h>
+#include <ESP8266WebServer.h>
+#include <StreamString.h>
 #define FOR(I,N) for(int I=0;I<N;I++)
 const char*apid = "TIGO_m3a_A8";
 const char*pswd = "12345678";
+ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
 #define AT2_SLAVE 0x14
 
@@ -64,15 +67,45 @@ void to_MotorA(int dir, int speed);
 void to_RGB(long color);
 void to_WLED1(char val);
 void signalling(int);
+void scanI2CDevice();
+StreamString htmlBuffer;
+StreamString outputBuffer;
+char ipString[16];
+
+void handleRoot() {
+  IPAddress localIp = WiFi.localIP();
+  sprintf(ipString,"%d.%d.%d.%d" ,localIp[0],localIp[1],localIp[2],localIp[3]);
+  int sec = millis() / 1000;
+  int min = sec / 60;
+  int hr = min / 60;
+  scanI2CDevice();
+  outputBuffer.replace("\n", "<p/>");
+  htmlBuffer.clear();
+  htmlBuffer.printf("<html><head><meta http-equiv='refresh' content='5'/></head>\
+  <body>\
+    <h1>esp m3 Data Output (Air Serial)</h1>\
+    <p>Uptime: %02d:%02d:%02d</p>\
+    <p>IP Adress: %s </p>\
+    <p>Data: %s </p>\
+  </body>\
+</html>",
+              hr, min % 60, sec % 60, ipString, outputBuffer.c_str());
+  server.send(200, "text/html", htmlBuffer.c_str());
+}
 
 void setup() {
+  htmlBuffer.reserve(200);  //approx 200 chars
+  outputBuffer.reserve(200); //same
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apid, pswd);
   IPAddress IP = WiFi.softAPIP();
   WiFi.begin("TIGO5G2.12", "abcdefab");
   delay(1000);
+  
   ArduinoOTA.begin();
   pinMode(2, OUTPUT);
+  server.on("/", handleRoot);
+  server.begin();
   Wire.setClock(400000); //set i2c fast mode.
   Wire.begin(4,14); //join i2c as master //sda4,scl14
 
@@ -127,8 +160,13 @@ void setup() {
 }
 
 void loop() {
-  ArduinoOTA.handle();
-  digitalWrite(2,1);
+  server.handleClient();
+  ArduinoOTA.handle(); //required for ota.
+
+  //here we do our regular jobs:
+  
+  // to_WLED1(0);
+  // to_WLED2(0);
   #ifdef TF_ON
   head=sensor.readRangeContinuousMillimeters();
   if (sensor.timeoutOccurred()) FOR(k,3)signalling(50);
@@ -204,7 +242,7 @@ void to_WLED1(char val){
   Wire.write('L');
   Wire.write('1');//padding byte
   Wire.write((char)val);
-  Wire.write('E');//padding byte was required!!
+  //Wire.write('E');//padding byte
   Wire.endTransmission(); 
 }
 
@@ -227,4 +265,43 @@ void signalling(int delaytime) {
     digitalWrite(2, LOW);
     delay(delaytime);
   }
+}
+
+void scanI2CDevice(){
+  byte error, address;
+  int nDevices;
+  outputBuffer.clear();
+  outputBuffer.println("Scanning...");
+
+  nDevices = 0;
+  for(address = 1; address < 127; address++ )
+  {
+    // The i2c_scanner uses the return value of
+    // the Write.endTransmisstion to see if
+    // a device did acknowledge to the address.
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0)
+    {
+      outputBuffer.print("I2C device found at address 0x");
+      if (address<16)
+        outputBuffer.print("0");
+      outputBuffer.print(address,HEX);
+      outputBuffer.println("  !");
+
+      nDevices++;
+    }
+    else if (error==4)
+    {
+      outputBuffer.print("Unknown error at address 0x");
+      if (address<16)
+        outputBuffer.print("0");
+      outputBuffer.println(address,HEX);
+    }
+  }
+  if (nDevices == 0)
+    outputBuffer.println("No I2C devices found\n");
+  else
+    outputBuffer.println("done\n");
 }
