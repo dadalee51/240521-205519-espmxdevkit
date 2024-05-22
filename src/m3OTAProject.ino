@@ -99,9 +99,9 @@ void setup() {
   outputBuffer.reserve(200); //same
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apid, pswd);
-  IPAddress IP = WiFi.softAPIP();
+  //IPAddress IP = WiFi.softAPIP();
   WiFi.begin("TIGO5G2.12", "abcdefab");
-  delay(1000);
+  // delay(1000);
   ArduinoOTA.begin();
   pinMode(2, OUTPUT);
   server.on("/", handleRoot);
@@ -310,19 +310,24 @@ void steerBot(int steerVal, int power){
     to_MotorA(0,0);
     to_MotorD(0,0);
   }else if (steerVal < -50 && steerVal >= -100){
-    to_MotorA(power>0?-1:1, (abs(steerVal)-50) * MOTOR_MAX * 2082  / abs(power) / 1000);
+    to_MotorA(power>0?-1:1, 70+(abs(steerVal)-50) * MOTOR_MAX * 833  / abs(power) / 1000);
     to_MotorD(power>0?1:-1, abs(power));
   }else if(steerVal < 0 && steerVal >= -50){
-    to_MotorA(power>0?-1:1, (50-abs(steerVal)) * MOTOR_MAX * 2058  / abs(power) / 1000);
+    to_MotorA(power>0?-1:1, 70+(50-abs(steerVal)) * MOTOR_MAX * 833  / abs(power) / 1000);
     to_MotorD(power>0?1:-1, abs(power));
   }else if(steerVal > 0 && steerVal <= 50){
     to_MotorA(power>0?1:-1, abs(power));
-    to_MotorD(power>0?-1:1, (50-abs(steerVal)) * MOTOR_MAX * 2058  / abs(power) / 1000);
+    to_MotorD(power>0?-1:1, 70+(50-abs(steerVal)) * MOTOR_MAX * 833  / abs(power) / 1000);
   }else if(steerVal > 50 && steerVal <= 100){
     to_MotorA(power>0?1:-1, abs(power));
-    to_MotorD(power>0?-1:1, (abs(steerVal)-50) * MOTOR_MAX * 2082  / abs(power) / 1000);
+    to_MotorD(power>0?-1:1, 70+(abs(steerVal)-50) * MOTOR_MAX * 833  / abs(power) / 1000);
   }else{
     to_MotorA(power>0?1:-1, abs(power));
     to_MotorD(power>0?1:-1, abs(power));
   }
+}
+
+void debug_to_html(){
+  outputBuffer.clear();
+  outputBuffer.printf("Test:0x%02X", 0xFF);
 }
