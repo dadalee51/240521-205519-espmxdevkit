@@ -39,9 +39,9 @@ const char*pswd = "12345678";
 ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
 #define AT2_SLAVE 0x14
-
+#define MOTOR_MAX 120
 #define TF_OFF
-#define ACC_OFF
+#define ACC_ON
 #define CLR_OFF
 
 #ifdef ACC_ON
@@ -64,6 +64,7 @@ ESP8266WebServer server(80);
 //function header 
 void TCA9548A(uint8_t bus);
 void to_MotorA(int dir, int speed);
+void to_MotorD(int dir, int speed);
 void to_RGB(long color);
 void to_WLED1(char val);
 void signalling(int);
@@ -78,8 +79,8 @@ void handleRoot() {
   int sec = millis() / 1000;
   int min = sec / 60;
   int hr = min / 60;
-  scanI2CDevice();
-  outputBuffer.replace("\n", "<p/>");
+  //scanI2CDevice(); //only enable when needed.
+  outputBuffer.replace("\n", "<br/>");
   htmlBuffer.clear();
   htmlBuffer.printf("<html><head><meta http-equiv='refresh' content='5'/></head>\
   <body>\
@@ -101,14 +102,13 @@ void setup() {
   IPAddress IP = WiFi.softAPIP();
   WiFi.begin("TIGO5G2.12", "abcdefab");
   delay(1000);
-  
   ArduinoOTA.begin();
   pinMode(2, OUTPUT);
   server.on("/", handleRoot);
   server.begin();
   Wire.setClock(400000); //set i2c fast mode.
   Wire.begin(4,14); //join i2c as master //sda4,scl14
-
+  steerBot(0,0);
 #ifdef TF_ON
   if (!sensor.init()) {
     FOR(k,3){
@@ -160,13 +160,16 @@ void setup() {
 }
 
 void loop() {
-  server.handleClient();
+  server.handleClient(); //use this to enable airSerial
   ArduinoOTA.handle(); //required for ota.
-
   //here we do our regular jobs:
+  //signalling(100);
+  to_WLED1('A');
+  to_WLED2('A');
+  //to_RGB(0xFFBBFF);
+  //steerBot(0,0);
   
-  // to_WLED1(0);
-  // to_WLED2(0);
+
   #ifdef TF_ON
   head=sensor.readRangeContinuousMillimeters();
   if (sensor.timeoutOccurred()) FOR(k,3)signalling(50);
@@ -184,9 +187,11 @@ void loop() {
   #ifdef ACC_ON
   z_acc = accel.getZ();
   if (z_acc < 0){
-    digitalWrite(WLED1, 1); //on
+    to_RGB(0x00FFFF);
+    steerBot(0,100);
   }else{
-    digitalWrite(WLED1, 0);//Wled off
+    to_RGB(0xFF00FF);
+    steerBot(0,0);
   }
   #endif
   
@@ -218,9 +223,8 @@ void to_RGB(long color){
   Wire.write(color>>16 & 0xFF); //R
   Wire.write(color>>8 & 0xFF); //G
   Wire.write(color & 0xFF); //B
-  Wire.write('E'); 
+  // Wire.write('E'); 
   Wire.endTransmission(); 
-  delay(1);
 }
 
 void to_MotorA(int dir, int speed){
@@ -228,10 +232,20 @@ void to_MotorA(int dir, int speed){
   Wire.beginTransmission(AT1_SLAVE); 
   Wire.write('M');//0
   Wire.write('A');//1
-  Wire.write('1'); //2
-  Wire.write((char)dir); //3 --> 1 or -1 to drive
-  Wire.write((char)speed); //4 1 to 127
-  Wire.write('E'); //this was required!!
+  Wire.write((char)dir); //2 --> 1 or -1 to drive
+  Wire.write((char)speed); //3 1 to 127
+  // Wire.write('E');
+  Wire.endTransmission(); 
+}
+
+void to_MotorD(int dir, int speed){
+  //control motor
+  Wire.beginTransmission(AT2_SLAVE); 
+  Wire.write('M');//0
+  Wire.write('D');//1
+  Wire.write((char)dir); //2 --> 1 or -1 to drive
+  Wire.write((char)speed); //3 1 to 127
+  // Wire.write('E');
   Wire.endTransmission(); 
 }
 
@@ -272,36 +286,43 @@ void scanI2CDevice(){
   int nDevices;
   outputBuffer.clear();
   outputBuffer.println("Scanning...");
-
   nDevices = 0;
-  for(address = 1; address < 127; address++ )
-  {
-    // The i2c_scanner uses the return value of
-    // the Write.endTransmisstion to see if
-    // a device did acknowledge to the address.
+  for(address = 1; address < 127; address++ ){
     Wire.beginTransmission(address);
     error = Wire.endTransmission();
-
-    if (error == 0)
-    {
+    if (error == 0){
       outputBuffer.print("I2C device found at address 0x");
-      if (address<16)
-        outputBuffer.print("0");
+      if (address<16) outputBuffer.print("0");
       outputBuffer.print(address,HEX);
       outputBuffer.println("  !");
-
       nDevices++;
-    }
-    else if (error==4)
-    {
+    }else if (error==4){
       outputBuffer.print("Unknown error at address 0x");
-      if (address<16)
-        outputBuffer.print("0");
+      if (address<16) outputBuffer.print("0");
       outputBuffer.println(address,HEX);
     }
   }
-  if (nDevices == 0)
-    outputBuffer.println("No I2C devices found\n");
-  else
-    outputBuffer.println("done\n");
+  if (nDevices == 0) outputBuffer.println("No I2C devices found\n");
+  else outputBuffer.println("done\n");
+}
+void steerBot(int steerVal, int power){
+  if(power==0){
+    to_MotorA(0,0);
+    to_MotorD(0,0);
+  }else if (steerVal < -50 && steerVal >= -100){
+    to_MotorA(power>0?-1:1, (abs(steerVal)-50) * MOTOR_MAX * 2082  / abs(power) / 1000);
+    to_MotorD(power>0?1:-1, abs(power));
+  }else if(steerVal < 0 && steerVal >= -50){
+    to_MotorA(power>0?-1:1, (50-abs(steerVal)) * MOTOR_MAX * 2058  / abs(power) / 1000);
+    to_MotorD(power>0?1:-1, abs(power));
+  }else if(steerVal > 0 && steerVal <= 50){
+    to_MotorA(power>0?1:-1, abs(power));
+    to_MotorD(power>0?-1:1, (50-abs(steerVal)) * MOTOR_MAX * 2058  / abs(power) / 1000);
+  }else if(steerVal > 50 && steerVal <= 100){
+    to_MotorA(power>0?1:-1, abs(power));
+    to_MotorD(power>0?-1:1, (abs(steerVal)-50) * MOTOR_MAX * 2082  / abs(power) / 1000);
+  }else{
+    to_MotorA(power>0?1:-1, abs(power));
+    to_MotorD(power>0?1:-1, abs(power));
+  }
 }
