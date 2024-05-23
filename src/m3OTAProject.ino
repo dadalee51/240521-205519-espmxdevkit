@@ -34,7 +34,7 @@
 #include <ESP8266WebServer.h>
 #include <StreamString.h>
 #define FOR(I,N) for(int I=0;I<N;I++)
-const char*apid = "TIGO_m3a_A8";
+const char*apid = "TIGO_m3a_A2";
 const char*pswd = "12345678";
 ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
@@ -42,7 +42,7 @@ ESP8266WebServer server(80);
 #define MOTOR_MAX 120
 #define TF_OFF
 #define ACC_ON
-#define CLR_OFF
+#define CLR_ON
 
 #ifdef ACC_ON
   #include "SparkFun_LIS2DH12.h"
@@ -57,9 +57,10 @@ ESP8266WebServer server(80);
 #ifdef CLR_ON
   #include "veml6040.h"
   VEML6040 RGBWSensor;
-  int red=0; int mred=0;
-  int blue=0; int mblue=0; 
-  int green=0; int mgreen=0;
+  int r1=0; int r2=0;
+  int b1=0; int b2=0;
+  int g1=0; int g2=0;
+  int w1=0; int w2=0;
 #endif
 //function header 
 void TCA9548A(uint8_t bus);
@@ -127,17 +128,9 @@ void setup() {
   }
   #endif
   #ifdef CLR_ON
-    if(!RGBWSensor.begin()) {
-      FOR(i,5){
-        signalling(30);
-        delay(200);
-      }
-    }
-  #endif
-
-  #ifdef CLR_ON
   //switch to first clr sensr
   TCA9548A(0);
+  delay(500);
   RGBWSensor.setConfiguration(VEML6040_IT_40MS + VEML6040_AF_AUTO + VEML6040_SD_ENABLE);
   delay(500);
   FOR(i,5){
@@ -148,6 +141,7 @@ void setup() {
   }
   //switch to first clr sensr
   TCA9548A(1);
+  delay(500);
   RGBWSensor.setConfiguration(VEML6040_IT_40MS + VEML6040_AF_AUTO + VEML6040_SD_ENABLE);
   delay(500);
   FOR(i,5){
@@ -158,7 +152,8 @@ void setup() {
   }
   #endif  
 }
-
+long tmr1 = 0;
+bool botRun = 1;
 void loop() {
   server.handleClient(); //use this to enable airSerial
   ArduinoOTA.handle(); //required for ota.
@@ -188,21 +183,39 @@ void loop() {
   z_acc = accel.getZ();
   if (z_acc < 0){
     to_RGB(0x00FFFF);
-    steerBot(0,100);
+    //steerBot(abs(z_acc/10.0f),100);
+    botRun = 1;
   }else{
     to_RGB(0xFF00FF);
-    steerBot(0,0);
+    botRun = 0;
   }
+  
   #endif
   
  #ifdef CLR_ON
   TCA9548A(0);
+  delay(1);
   r1 = RGBWSensor.getRed();
   g1 = RGBWSensor.getGreen();
   b1 = RGBWSensor.getBlue();
   w1 = RGBWSensor.getWhite();
+  TCA9548A(1);
+  delay(1);
+  r2 = RGBWSensor.getRed();
+  g2 = RGBWSensor.getGreen();
+  b2 = RGBWSensor.getBlue();
+  w2 = RGBWSensor.getWhite();
+  int error = (w2 - w1)/8;
+  if (error < -100)error = -100;
+  if (error > 100)error = 100;
+  outputBuffer.clear();
+  outputBuffer.println(error);
+  if(botRun==1){
+    steerBot(error, 100);
+  }else{
+    steerBot(0, 0);
+  }
   #endif
-  
 }
 
 
@@ -305,25 +318,43 @@ void scanI2CDevice(){
   if (nDevices == 0) outputBuffer.println("No I2C devices found\n");
   else outputBuffer.println("done\n");
 }
+
+/**
+ * accounting for PWM startup threshold is around 70. so the actual working
+ * range of the motor power is actually from 70 to 120. 
+ * so if user input something like a power of 1 percent 
+ * we still need to move the motor. 
+ * so the real working range is not 0-120, is 1 to 50!
+ * when steerval is 49%, 
+ * left wheel moves as given power. 70 + 100% of 50.
+ * right wheel, drives at 70 + 1% of the 50 unit of power. which rounds to 71%.
+ * when steerval is 1%,  
+ * right wheel, drives at 70 + 49% of the 50 unit of power, which is  almost 120.(full speed)
+ *  so 50-abs(steerVal) * 120 * X / abs(power) / 1000 ==> 50. (X is 850)
+ * 
+ * sum up to 127
+*/
+#define BASESPEED 60
+#define WORKINGRANGE 60
 void steerBot(int steerVal, int power){
   if(power==0){
     to_MotorA(0,0);
     to_MotorD(0,0);
   }else if (steerVal < -50 && steerVal >= -100){
-    to_MotorA(power>0?-1:1, 70+(abs(steerVal)-50) * MOTOR_MAX * 833  / abs(power) / 1000);
-    to_MotorD(power>0?1:-1, abs(power));
+    to_MotorA(power>0? -1: 1, BASESPEED+(abs(steerVal)-50) * WORKINGRANGE / abs(power));
+    to_MotorD(power>0?  1:-1, BASESPEED+abs(power)*WORKINGRANGE / 100);
   }else if(steerVal < 0 && steerVal >= -50){
-    to_MotorA(power>0?-1:1, 70+(50-abs(steerVal)) * MOTOR_MAX * 833  / abs(power) / 1000);
-    to_MotorD(power>0?1:-1, abs(power));
+    to_MotorA(power>0?  1:-1, BASESPEED+(50-abs(steerVal)) * WORKINGRANGE / abs(power));
+    to_MotorD(power>0?  1:-1, BASESPEED+abs(power)*WORKINGRANGE / 100);
   }else if(steerVal > 0 && steerVal <= 50){
-    to_MotorA(power>0?1:-1, abs(power));
-    to_MotorD(power>0?-1:1, 70+(50-abs(steerVal)) * MOTOR_MAX * 833  / abs(power) / 1000);
+    to_MotorA(power>0?  1:-1, BASESPEED+abs(power)*WORKINGRANGE / 100); 
+    to_MotorD(power>0?  1:-1, BASESPEED+(50-abs(steerVal)) * WORKINGRANGE / abs(power)); 
   }else if(steerVal > 50 && steerVal <= 100){
-    to_MotorA(power>0?1:-1, abs(power));
-    to_MotorD(power>0?-1:1, 70+(abs(steerVal)-50) * MOTOR_MAX * 833  / abs(power) / 1000);
+    to_MotorA(power>0?  1:-1, BASESPEED+abs(power)*WORKINGRANGE / 100);
+    to_MotorD(power>0? -1: 1, BASESPEED+(abs(steerVal)-50) * WORKINGRANGE / abs(power));
   }else{
-    to_MotorA(power>0?1:-1, abs(power));
-    to_MotorD(power>0?1:-1, abs(power));
+    to_MotorA(power>0?1:-1, BASESPEED+abs(power)*WORKINGRANGE / 100);
+    to_MotorD(power>0?1:-1, BASESPEED+abs(power)*WORKINGRANGE / 100);
   }
 }
 
