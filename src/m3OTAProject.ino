@@ -34,7 +34,7 @@
 #include <ESP8266WebServer.h>
 #include <StreamString.h>
 #define FOR(I,N) for(int I=0;I<N;I++)
-const char*apid = "TIGO_m3a_A2";
+const char*apid = "TIGO_m3a_A6";
 const char*pswd = "12345678";
 ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
@@ -43,6 +43,8 @@ ESP8266WebServer server(80);
 #define TF_OFF
 #define ACC_ON
 #define CLR_ON
+#define IRLED_ON
+#define AIR_SERIAL_PRINT_SENSORVAL 1
 
 #ifdef ACC_ON
   #include "SparkFun_LIS2DH12.h"
@@ -62,6 +64,12 @@ ESP8266WebServer server(80);
   int g1=0; int g2=0;
   int w1=0; int w2=0;
 #endif
+#ifdef IRLED_ON
+  const int IR1 = 16; //this light up two fron IRleds.
+  const int IR2 = 12;
+  int ir1;
+#endif
+
 //function header 
 void TCA9548A(uint8_t bus);
 void to_MotorA(int dir, int speed);
@@ -73,7 +81,14 @@ void scanI2CDevice();
 StreamString htmlBuffer;
 StreamString outputBuffer;
 char ipString[16];
-
+int ldr1 = 0;
+int ldr2 = 0;
+int red_out = 0xFF;
+int green_out = 0xFF;
+int blue_out = 0xFF;
+int red_out_last = 0xFF;
+int green_out_last = 0xFF;
+int blue_out_last = 0xFF;
 void handleRoot() {
   IPAddress localIp = WiFi.localIP();
   sprintf(ipString,"%d.%d.%d.%d" ,localIp[0],localIp[1],localIp[2],localIp[3]);
@@ -151,29 +166,49 @@ void setup() {
     }
   }
   #endif  
+  #ifdef IRLED_ON
+    pinMode(IR1, OUTPUT);
+    pinMode(IR2, OUTPUT);
+    digitalWrite(IR1, 1);
+    digitalWrite(IR2, 0);
+  #endif
+
+  to_WLED1('A');
+  to_WLED2('A');
+
 }
 long tmr1 = 0;
 bool botRun = 1;
 void loop() {
   server.handleClient(); //use this to enable airSerial
   ArduinoOTA.handle(); //required for ota.
+  
   //here we do our regular jobs:
   //signalling(100);
-  to_WLED1('A');
-  to_WLED2('A');
+  // to_WLED1('A');
+  // to_WLED2('A');
   //to_RGB(0xFFBBFF);
   //steerBot(0,0);
-  
+  read_IR_N_LDR();
+  if (ir1 >80 ){
+    blue_out = 0xF0;
+    // to_WLED1('A');
+    // to_WLED2('A');
+  }else{
+    blue_out = 0xFF;
+    // to_WLED1('B');
+    // to_WLED2('B');
+  } 
 
   #ifdef TF_ON
   head=sensor.readRangeContinuousMillimeters();
   if (sensor.timeoutOccurred()) FOR(k,3)signalling(50);
-  if(head > 300){
-    digitalWrite(WLED2,1); //turn on
+  if(head > 200){
     to_WLED1('A');
+    to_WLED2('A');
   }else{
-    digitalWrite(WLED2,0);
     to_WLED1('B');
+    to_WLED2('B');
   }
   //to_Int(head);
   #endif
@@ -182,11 +217,13 @@ void loop() {
   #ifdef ACC_ON
   z_acc = accel.getZ();
   if (z_acc < 0){
-    to_RGB(0x00FFFF);
+    red_out = 0xF0;
+    green_out = 0xFF;
     //steerBot(abs(z_acc/10.0f),100);
     botRun = 1;
   }else{
-    to_RGB(0xFF00FF);
+    red_out = 0xFF;
+    green_out = 0xF0;
     botRun = 0;
   }
   
@@ -194,13 +231,13 @@ void loop() {
   
  #ifdef CLR_ON
   TCA9548A(0);
-  delay(1);
+  delayMicroseconds(100);
   r1 = RGBWSensor.getRed();
   g1 = RGBWSensor.getGreen();
   b1 = RGBWSensor.getBlue();
   w1 = RGBWSensor.getWhite();
   TCA9548A(1);
-  delay(1);
+  delayMicroseconds(100);
   r2 = RGBWSensor.getRed();
   g2 = RGBWSensor.getGreen();
   b2 = RGBWSensor.getBlue();
@@ -208,14 +245,26 @@ void loop() {
   int error = (w2 - w1)/8;
   if (error < -100)error = -100;
   if (error > 100)error = 100;
-  outputBuffer.clear();
-  outputBuffer.println(error);
+  #ifdef AIR_SERIAL_PRINT_SENSORVAL
+  outputBuffer.printf("w1 w2 ERROR: %d\n", error);
+  #endif
   if(botRun==1){
     steerBot(error, 100);
   }else{
     steerBot(0, 0);
   }
   #endif
+  //update RGB 
+  
+  if(red_out_last   != red_out   || 
+     blue_out_last  != blue_out  || 
+     green_out_last != green_out    )
+     to_RGB(red_out<<16 & 0xFF0000 | green_out<<8 & 0xFF00 | blue_out & 0xFF);
+  red_out_last = red_out;
+  blue_out_last = blue_out;
+  green_out_last = green_out;
+  //end of loop jobs
+  outputBuffer.clear();
 }
 
 
@@ -284,6 +333,29 @@ void to_WLED2(char val){
   Wire.endTransmission(); 
 }
 
+//read from IR
+void read_IR_N_LDR(){
+  Wire.requestFrom(AT2_SLAVE, 8);    // request x bytes from sensor
+  byte x3 = Wire.read();
+  byte x2 = Wire.read();
+  byte x1 = Wire.read();
+  byte x0 = Wire.read();
+  //--------extracting Light Dependent Resistor signal------------
+  ldr1 = (x3 & 0xFF) << 8 | (x2 & 0xFF);
+  ldr2 = (x1 & 0xFF) << 8 | (x0 & 0xFF);
+  byte y3 = Wire.read(); 
+  byte y2 = Wire.read();
+  byte y1 = Wire.read();//no use
+  byte y0 = Wire.read();//no use
+  //--------extracting Infrared Receiver signal------------
+  ir1 = (y3 & 0xFF) << 8 | (y2 & 0xFF);
+  //int ir2 = (y1 & 0xFF) << 8 | (y0 & 0xFF); //ir doesn't work.
+  #ifdef AIR_SERIAL_PRINT_SENSORVAL
+  outputBuffer.printf("IR1: %d\n",ir1);
+  outputBuffer.printf("LDR1: %d, LDR2: %d \n",ldr1, ldr2);
+  #endif
+}
+
 void signalling(int delaytime) {
   // Blink the LED as a signal
   for (int i = 0; i < 3; i++) {
@@ -320,19 +392,10 @@ void scanI2CDevice(){
 }
 
 /**
- * accounting for PWM startup threshold is around 70. so the actual working
  * range of the motor power is actually from 70 to 120. 
  * so if user input something like a power of 1 percent 
  * we still need to move the motor. 
  * so the real working range is not 0-120, is 1 to 50!
- * when steerval is 49%, 
- * left wheel moves as given power. 70 + 100% of 50.
- * right wheel, drives at 70 + 1% of the 50 unit of power. which rounds to 71%.
- * when steerval is 1%,  
- * right wheel, drives at 70 + 49% of the 50 unit of power, which is  almost 120.(full speed)
- *  so 50-abs(steerVal) * 120 * X / abs(power) / 1000 ==> 50. (X is 850)
- * 
- * sum up to 127
 */
 #define BASESPEED 60
 #define WORKINGRANGE 60
