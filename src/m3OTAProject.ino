@@ -34,7 +34,7 @@
 #include <ESP8266WebServer.h>
 #include <StreamString.h>
 #define FOR(I,N) for(int I=0;I<N;I++)
-const char*apid = "TIGO_m3a_A7";
+const char*apid = "TIGO_m3a_A9";
 const char*pswd = "12345678";
 ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
@@ -232,15 +232,15 @@ void loop() {
  #ifdef CLR_ON
   TCA9548A(0);
   delayMicroseconds(100);
-  r1 = RGBWSensor.getRed();
-  g1 = RGBWSensor.getGreen();
-  b1 = RGBWSensor.getBlue();
+  // r1 = RGBWSensor.getRed();
+  // g1 = RGBWSensor.getGreen();
+  // b1 = RGBWSensor.getBlue();
   w1 = RGBWSensor.getWhite();
   TCA9548A(1);
   delayMicroseconds(100);
-  r2 = RGBWSensor.getRed();
-  g2 = RGBWSensor.getGreen();
-  b2 = RGBWSensor.getBlue();
+  // r2 = RGBWSensor.getRed();
+  // g2 = RGBWSensor.getGreen();
+  // b2 = RGBWSensor.getBlue();
   w2 = RGBWSensor.getWhite();
   int error = (w2 - w1)/8;
   if (error < -100)error = -100;
