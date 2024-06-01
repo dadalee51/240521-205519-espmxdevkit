@@ -34,7 +34,7 @@
 #include <ESP8266WebServer.h>
 #include <StreamString.h>
 #define FOR(I,N) for(int I=0;I<N;I++)
-const char*apid = "TIGO_m3a_A9";
+const char*apid = "TIGO_m3a_A7";
 const char*pswd = "12345678";
 ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
@@ -43,7 +43,7 @@ ESP8266WebServer server(80);
 #define TF_OFF
 #define ACC_ON
 #define CLR_ON
-#define IRLED_ON
+#define IRLED_OFF
 #define AIR_SERIAL_PRINT_SENSORVAL 1
 
 #ifdef ACC_ON
@@ -83,6 +83,7 @@ StreamString outputBuffer;
 char ipString[16];
 int ldr1 = 0;
 int ldr2 = 0;
+int error_ldr, error_ldr_base;
 int red_out = 0xFF;
 int green_out = 0xFF;
 int blue_out = 0xFF;
@@ -145,9 +146,9 @@ void setup() {
   #ifdef CLR_ON
   //switch to first clr sensr
   TCA9548A(0);
-  delay(500);
+  delay(100);
   RGBWSensor.setConfiguration(VEML6040_IT_40MS + VEML6040_AF_AUTO + VEML6040_SD_ENABLE);
-  delay(500);
+  delay(100);
   FOR(i,5){
     if(!RGBWSensor.begin()) {
       signalling(30);
@@ -156,9 +157,9 @@ void setup() {
   }
   //switch to first clr sensr
   TCA9548A(1);
-  delay(500);
+  delay(100);
   RGBWSensor.setConfiguration(VEML6040_IT_40MS + VEML6040_AF_AUTO + VEML6040_SD_ENABLE);
-  delay(500);
+  delay(100);
   FOR(i,5){
    if(!RGBWSensor.begin()) {
      signalling(30);
@@ -173,10 +174,17 @@ void setup() {
     digitalWrite(IR2, 0);
   #endif
 
-  to_WLED1('A');
-  to_WLED2('A');
+  to_WLED1('B');
+  to_WLED2('B');
+
+  //remember LDR difference:
+  // read_IR_N_LDR();
+  // error_ldr_base = (ldr1 - ldr2);
 
 }
+
+/*=======================MainLoop====================================*/
+
 long tmr1 = 0;
 bool botRun = 1;
 void loop() {
@@ -190,6 +198,7 @@ void loop() {
   //to_RGB(0xFFBBFF);
   //steerBot(0,0);
   read_IR_N_LDR();
+  #ifdef IR_LEN_ON
   if (ir1 >80 ){
     blue_out = 0xF0;
     // to_WLED1('A');
@@ -199,7 +208,7 @@ void loop() {
     // to_WLED1('B');
     // to_WLED2('B');
   } 
-
+  #endif
   #ifdef TF_ON
   head=sensor.readRangeContinuousMillimeters();
   if (sensor.timeoutOccurred()) FOR(k,3)signalling(50);
@@ -231,25 +240,28 @@ void loop() {
   
  #ifdef CLR_ON
   TCA9548A(0);
-  delayMicroseconds(100);
   // r1 = RGBWSensor.getRed();
   // g1 = RGBWSensor.getGreen();
   // b1 = RGBWSensor.getBlue();
-  w1 = RGBWSensor.getWhite();
+  w1 = reget_white();
   TCA9548A(1);
-  delayMicroseconds(100);
   // r2 = RGBWSensor.getRed();
   // g2 = RGBWSensor.getGreen();
   // b2 = RGBWSensor.getBlue();
-  w2 = RGBWSensor.getWhite();
-  int error = (w2 - w1)/8;
+  w2 = reget_white();
+  int error = (w2 - w1)*3;
   if (error < -100)error = -100;
   if (error > 100)error = 100;
   #ifdef AIR_SERIAL_PRINT_SENSORVAL
-  outputBuffer.printf("w1 w2 ERROR: %d\n", error);
+  outputBuffer.printf("w1 %d w2 %d ERROR: %d\n", w1, w2, error);
   #endif
+  
+  //alternative: use LDR as line sensor
+  // error_ldr = (ldr1 - ldr2) - error_ldr_base ;
+  //outputBuffer.printf("ERROR_LDR: %d\n",error_ldr);
   if(botRun==1){
-    steerBot(error, 100);
+    steerBot(error, 90);
+    // steerBot(error_ldr, 50);
   }else{
     steerBot(0, 0);
   }
@@ -291,11 +303,13 @@ void to_RGB(long color){
 
 void to_MotorA(int dir, int speed){
   //control motor
+
   Wire.beginTransmission(AT1_SLAVE); 
   Wire.write('M');//0
   Wire.write('A');//1
   Wire.write((char)dir); //2 --> 1 or -1 to drive
-  Wire.write((char)speed); //3 1 to 127
+  
+  Wire.write((char)speed>15?speed-15:speed); //3 1 to 127
   // Wire.write('E');
   Wire.endTransmission(); 
 }
@@ -348,10 +362,12 @@ void read_IR_N_LDR(){
   byte y1 = Wire.read();//no use
   byte y0 = Wire.read();//no use
   //--------extracting Infrared Receiver signal------------
+  #ifdef AIR_SERIAL_PRINT_SENSORVAL  
+  #ifdef IR_LED_ON
   ir1 = (y3 & 0xFF) << 8 | (y2 & 0xFF);
   //int ir2 = (y1 & 0xFF) << 8 | (y0 & 0xFF); //ir doesn't work.
-  #ifdef AIR_SERIAL_PRINT_SENSORVAL
   outputBuffer.printf("IR1: %d\n",ir1);
+  #endif
   outputBuffer.printf("LDR1: %d, LDR2: %d \n",ldr1, ldr2);
   #endif
 }
@@ -397,8 +413,8 @@ void scanI2CDevice(){
  * we still need to move the motor. 
  * so the real working range is not 0-120, is 1 to 50!
 */
-#define BASESPEED 60
-#define WORKINGRANGE 60
+#define BASESPEED 40
+#define WORKINGRANGE 50
 void steerBot(int steerVal, int power){
   if(power==0){
     to_MotorA(0,0);
@@ -424,4 +440,9 @@ void steerBot(int steerVal, int power){
 void debug_to_html(){
   outputBuffer.clear();
   outputBuffer.printf("Test:0x%02X", 0xFF);
+}
+
+int reget_white(){
+  RGBWSensor.setConfiguration(VEML6040_IT_40MS + VEML6040_AF_AUTO + VEML6040_SD_ENABLE);
+  return RGBWSensor.getWhite();
 }
