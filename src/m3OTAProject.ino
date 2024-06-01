@@ -34,7 +34,7 @@
 #include <ESP8266WebServer.h>
 #include <StreamString.h>
 #define FOR(I,N) for(int I=0;I<N;I++)
-const char*apid = "TIGO_m3a_A7";
+const char*apid = "TIGO_m3a_A__";
 const char*pswd = "12345678";
 ESP8266WebServer server(80);
 #define AT1_SLAVE 0x12
